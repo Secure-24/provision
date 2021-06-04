@@ -80,7 +80,7 @@ def get_vagrant_dir(platform, vagrant_dirs, i = 0)
   platform_dir
 end
 
-def configure_remoting(platform, remoting_config_path)
+def configure_remoting(platform, remoting_config_path, password)
   if platform_uses_ssh(platform)
     command = "vagrant ssh-config > \"#{remoting_config_path}\""
     run_local_command(command, @vagrant_env)
@@ -94,11 +94,16 @@ def configure_remoting(platform, remoting_config_path)
       raise ArgumentError, "Unsupported Platform: '#{platform}'"
     end
     # Pre-configure sshd on the platform prior to handing back
+    ssh_params = {
+      port: remoting_config['port'],
+      keys: remoting_config['identityfile'],
+      password: password,
+      verbose: :debug,
+    }.reject { |_k, v| v.nil? }
     Net::SSH.start(
       remoting_config['hostname'],
       remoting_config['user'],
-      port: remoting_config['port'],
-      keys: remoting_config['identityfile'],
+      **ssh_params,
     ) do |session|
       session.exec!('sudo su -c "cp -r .ssh /root/."')
       session.exec!('sudo su -c "sed -i \"s/.*PermitUserEnvironment\s.*/PermitUserEnvironment yes/g\" /etc/ssh/sshd_config"')
@@ -114,7 +119,7 @@ def configure_remoting(platform, remoting_config_path)
   remoting_config
 end
 
-def provision(platform, inventory_location, enable_synced_folder, provider, cpus, memory, hyperv_vswitch, hyperv_smb_username, hyperv_smb_password, box_url)
+def provision(platform, inventory_location, enable_synced_folder, provider, cpus, memory, hyperv_vswitch, hyperv_smb_username, hyperv_smb_password, box_url, password)
   if platform_is_windows?(platform) && !supports_windows_platform?
     raise "To provision a Windows VM with this task you must have vagrant 2.2.0 or later installed; vagrant seems to be installed at v#{vagrant_version}"
   end
@@ -134,7 +139,7 @@ def provision(platform, inventory_location, enable_synced_folder, provider, cpus
   vm_id = File.read(File.join(@vagrant_env, '.vagrant', 'machines', 'default', provider, 'index_uuid'))
 
   remote_config_file = platform_uses_ssh(platform) ? File.join(@vagrant_env, 'ssh-config') : File.join(@vagrant_env, 'winrm-config')
-  remote_config = configure_remoting(platform, remote_config_file)
+  remote_config = configure_remoting(platform, remote_config_file, password)
   node_name = "#{remote_config['hostname']}:#{remote_config['port']}"
 
   if platform_uses_ssh(platform)
@@ -145,7 +150,6 @@ def provision(platform, inventory_location, enable_synced_folder, provider, cpus
         'ssh' => {
           'user' => remote_config['user'],
           'host' => remote_config['hostname'],
-          'private-key' => remote_config['identityfile'][0],
           'host-key-check' => remote_config['stricthostkeychecking'],
           'port' => remote_config['port'],
           'run-as' => 'root',
@@ -158,6 +162,8 @@ def provision(platform, inventory_location, enable_synced_folder, provider, cpus
         'vagrant_env' => @vagrant_env,
       },
     }
+    node['config']['ssh']['private-key'] = remote_config['identityfile'][0] if remote_config['identityfile']
+    node['config']['ssh']['password'] = password if password
     group_name = 'ssh_nodes'
   else
     # TODO: Need to figure out where SSL comes from
@@ -219,6 +225,7 @@ hyperv_vswitch      = params['hyperv_vswitch'].nil? ? ENV['VAGRANT_HYPERV_VSWITC
 hyperv_smb_username = params['hyperv_smb_username'].nil? ? ENV['VAGRANT_HYPERV_SMB_USERNAME'] : params['hyperv_smb_username']
 hyperv_smb_password = params['hyperv_smb_password'].nil? ? ENV['VAGRANT_HYPERV_SMB_PASSWORD'] : params['hyperv_smb_password']
 box_url             = params['box_url'].nil? ? ENV['VAGRANT_BOX_URL'] : params['box_url']
+password            = params['password'].nil? ? ENV['VAGRANT_PASSWORD'] : params['password']
 raise 'specify a node_name when tearing down' if action == 'tear_down' && node_name.nil?
 raise 'specify a platform when provisioning' if action == 'provision' && platform.nil?
 unless node_name.nil? ^ platform.nil?
@@ -233,7 +240,7 @@ unless node_name.nil? ^ platform.nil?
 end
 
 begin
-  result = provision(platform, inventory_location, enable_synced_folder, provider, cpus, memory, hyperv_vswitch, hyperv_smb_username, hyperv_smb_password, box_url) if action == 'provision'
+  result = provision(platform, inventory_location, enable_synced_folder, provider, cpus, memory, hyperv_vswitch, hyperv_smb_username, hyperv_smb_password, box_url, password) if action == 'provision'
   result = tear_down(node_name, inventory_location) if action == 'tear_down'
   puts result.to_json
   exit 0
