@@ -78,9 +78,9 @@ def configure_remoting(platform, remoting_config_path)
     run_local_command(command, @vagrant_env)
     remoting_config = Net::SSH::Config.load(remoting_config_path, 'default')
     case platform
-    when %r{debian.*|ubuntu.*}
+    when %r{debian.*|ubuntu.*|sles-11.*|(centos|redhat|oracle)-6.*}
       restart_command = 'service ssh restart'
-    when %r{centos.*}
+    when %r{centos.*|redhat.*|oracle.*|sles.*}
       restart_command = 'systemctl restart sshd.service'
     else
       raise ArgumentError, "Unsupported Platform: '#{platform}'"
